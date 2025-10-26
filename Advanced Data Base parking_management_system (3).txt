@@ -1,0 +1,402 @@
+-- Parking Management System Implementation in Oracle Database
+-- Group Assignment Members:
+-- Birhanu Fiseha (Group Leader) (GUR/02498/15)
+-- Bihoney Gebremeskel (GUR/01020/16)
+-- Atinaw Dessie (GUR/22848/16)
+-- Miheretu Mulunehe (GUR/00341/16)
+-- Temesegen Dessie (GUR/01339/16)
+-- Submitted to: Mr. Antenehe
+-- Submission Date: 10/10/2017 E.C
+
+-- This script includes DDL, DML, DCL, TCL, Triggers, Views, Joins, OQL, Aggregate Functions, 
+-- Backup/Recovery Setup, Security, Reporting Queries, Concurrency, and Indexing
+
+-- 1a. DDL: Data Definition Language (Create Database Objects)
+-- Explanation: DDL defines the database structure (tables, constraints, indexes). 
+-- In Oracle, we create tablespaces, users, and tables with constraints to ensure data integrity.
+-- Application: Run these commands as a privileged user (e.g., SYSTEM) in SQL*Plus or SQL Developer.
+
+-- Create Tablespace for PMS
+CREATE TABLESPACE pms_data
+DATAFILE 'pms_data.dbf'
+SIZE 100M
+AUTOEXTEND ON
+NEXT 10M
+MAXSIZE UNLIMITED;
+
+-- Create User for PMS
+CREATE USER pms_admin
+IDENTIFIED BY pms_password123
+DEFAULT TABLESPACE pms_data
+QUOTA UNLIMITED ON pms_data;
+
+-- Grant Basic Privileges
+GRANT CONNECT, RESOURCE, CREATE VIEW, CREATE PROCEDURE, CREATE TRIGGER TO pms_admin;
+
+-- Connect as pms_admin
+CONNECT pms_admin/pms_password123;
+
+-- Create Tables with Constraints
+CREATE TABLE users (
+    user_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name VARCHAR2(100) NOT NULL,
+    email VARCHAR2(100) UNIQUE NOT NULL,
+    phone_number VARCHAR2(20) NOT NULL,
+    role VARCHAR2(50) NOT NULL CHECK (role IN ('Customer', 'Admin', 'Employee')),
+    password_hash VARCHAR2(100) NOT NULL
+);
+
+CREATE TABLE vehicles (
+    vehicle_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id NUMBER,
+    license_plate VARCHAR2(20) UNIQUE NOT NULL,
+    vehicle_type VARCHAR2(50) NOT NULL,
+    brand VARCHAR2(50),
+    model VARCHAR2(50),
+    color VARCHAR2(50),
+    CONSTRAINT fk_vehicles_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+CREATE TABLE parking_slots (
+    slot_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    slot_number VARCHAR2(20) UNIQUE NOT NULL,
+    location VARCHAR2(100) NOT NULL,
+    status VARCHAR2(20) NOT NULL CHECK (status IN ('Available', 'Occupied', 'Reserved')),
+    price_per_hour NUMBER(10,2) NOT NULL CHECK (price_per_hour >= 0)
+);
+
+CREATE TABLE reservations (
+    reservation_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id NUMBER,
+    vehicle_id NUMBER,
+    slot_id NUMBER,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
+    status VARCHAR2(20) NOT NULL CHECK (status IN ('Pending', 'Confirmed', 'Completed', 'Cancelled')),
+    CONSTRAINT chk_reservation_time CHECK (end_time > start_time),
+    CONSTRAINT chk_reservation_duration CHECK (end_time - start_time <= INTERVAL '24' HOUR),
+    CONSTRAINT fk_reservations_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+    CONSTRAINT fk_reservations_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE SET NULL,
+    CONSTRAINT fk_reservations_slot FOREIGN KEY (slot_id) REFERENCES parking_slots(slot_id) ON DELETE SET NULL
+);
+
+CREATE TABLE payments (
+    payment_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    reservation_id NUMBER,
+    user_id NUMBER,
+    amount_paid NUMBER(10,2) NOT NULL CHECK (amount_paid > 0),
+    payment_date TIMESTAMP NOT NULL,
+    payment_status VARCHAR2(20) NOT NULL CHECK (payment_status IN ('Pending', 'Paid', 'Failed')),
+    CONSTRAINT fk_payments_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(reservation_id) ON DELETE CASCADE,
+    CONSTRAINT fk_payments_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+CREATE TABLE payment_methods (
+    method_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    method_name VARCHAR2(50) UNIQUE NOT NULL CHECK (method_name IN ('Credit Card', 'Mobile Payment', 'Cash'))
+);
+
+CREATE TABLE payment_transactions (
+    payment_id NUMBER,
+    method_id NUMBER,
+    CONSTRAINT pk_payment_transactions PRIMARY KEY (payment_id, method_id),
+    CONSTRAINT fk_transactions_payment FOREIGN KEY (payment_id) REFERENCES payments(payment_id) ON DELETE CASCADE,
+    CONSTRAINT fk_transactions_method FOREIGN KEY (method_id) REFERENCES payment_methods(method_id) ON DELETE SET NULL
+);
+
+CREATE TABLE entry_exit_logs (
+    log_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vehicle_id NUMBER,
+    slot_id NUMBER,
+    entry_time TIMESTAMP NOT NULL,
+    exit_time TIMESTAMP,
+    CONSTRAINT chk_log_time CHECK (exit_time IS NULL OR exit_time > entry_time),
+    CONSTRAINT fk_logs_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE SET NULL,
+    CONSTRAINT fk_logs_slot FOREIGN KEY (slot_id) REFERENCES parking_slots(slot_id) ON DELETE SET NULL
+);
+
+-- 1b. DML: Data Manipulation Language (CRUD Operations)
+-- Explanation: DML includes INSERT, SELECT, UPDATE, DELETE to manage data.
+-- Application: Execute these as pms_admin to populate and manipulate data.
+
+-- INSERT (Create)
+INSERT INTO users (full_name, email, phone_number, role, password_hash) VALUES
+    ('Birhanu Fiseha', 'birhanu.fiseha@email.com', '+251911234567', 'Customer', 'hashed_password1'),
+    ('Biniam Ambachew', 'biniam.ambachew@email.com', '+251922345678', 'Customer', 'hashed_password2');
+
+INSERT INTO vehicles (user_id, license_plate, vehicle_type, brand, model, color) VALUES
+    (1, 'ABC123', 'Car', 'Toyota', 'Camry', 'Blue'),
+    (2, 'XYZ789', 'Car', 'Honda', 'Civic', 'Red');
+
+INSERT INTO parking_slots (slot_number, location, status, price_per_hour) VALUES
+    ('P001', 'Level 1', 'Available', 5.00),
+    ('P002', 'Level 1', 'Available', 5.00);
+
+INSERT INTO reservations (user_id, vehicle_id, slot_id, start_time, end_time, status) VALUES
+    (1, 1, 1, TO_TIMESTAMP('2025-02-25 08:00:00', 'YYYY-MM-DD HH24:MI:SS'), 
+     TO_TIMESTAMP('2025-02-25 10:00:00', 'YYYY-MM-DD HH24:MI:SS'), 'Confirmed');
+
+INSERT INTO payments (reservation_id, user_id, amount_paid, payment_date, payment_status) VALUES
+    (1, 1, 10.00, TO_TIMESTAMP('2025-02-25 08:15:00', 'YYYY-MM-DD HH24:MI:SS'), 'Paid');
+
+INSERT INTO payment_methods (method_name) VALUES ('Credit Card');
+
+INSERT INTO payment_transactions (payment_id, method_id) VALUES (1, 1);
+
+INSERT INTO entry_exit_logs (vehicle_id, slot_id, entry_time, exit_time) VALUES
+    (1, 1, TO_TIMESTAMP('2025-02-25 08:05:00', 'YYYY-MM-DD HH24:MI:SS'), 
+     TO_TIMESTAMP('2025-02-25 10:05:00', 'YYYY-MM-DD HH24:MI:SS'));
+
+-- SELECT (Read)
+SELECT u.full_name, v.license_plate, r.start_time, r.end_time, ps.slot_number
+FROM users u
+JOIN reservations r ON u.user_id = r.user_id
+JOIN vehicles v ON r.vehicle_id = v.vehicle_id
+JOIN parking_slots ps ON r.slot_id = ps.slot_id
+WHERE r.status = 'Confirmed';
+
+-- UPDATE (Update)
+UPDATE parking_slots
+SET status = 'Reserved'
+WHERE slot_id = 1;
+
+-- DELETE (Delete)
+DELETE FROM reservations
+WHERE reservation_id = 1 AND status = 'Cancelled';
+
+-- 1c. DCL: Data Control Language (Security and Permissions)
+-- Explanation: DCL manages access control (GRANT, REVOKE).
+-- Application: Run as pms_admin to assign permissions to other users/roles.
+
+-- Create Role for Employees
+CREATE ROLE pms_employee;
+
+-- Grant Permissions to Employee Role
+GRANT SELECT, INSERT, UPDATE ON reservations TO pms_employee;
+GRANT SELECT ON users, vehicles, parking_slots TO pms_employee;
+
+-- Create Employee User
+CREATE USER pms_employee1
+IDENTIFIED BY emp_password123
+DEFAULT TABLESPACE pms_data;
+
+-- Assign Role to Employee
+GRANT pms_employee TO pms_employee1;
+
+-- Revoke Permission Example
+REVOKE UPDATE ON reservations FROM pms_employee;
+
+-- 1d. TCL: Transaction Control Language (Concurrency)
+-- Explanation: TCL manages transactions (COMMIT, ROLLBACK, SAVEPOINT) to ensure data consistency.
+-- Application: Use in SQL*Plus or SQL Developer to control transaction boundaries.
+
+-- Example Transaction
+BEGIN
+    SAVEPOINT start_reservation;
+    INSERT INTO reservations (user_id, vehicle_id, slot_id, start_time, end_time, status)
+    VALUES (2, 2, 2, TO_TIMESTAMP('2025-02-25 10:30:00', 'YYYY-MM-DD HH24:MI:SS'), 
+            TO_TIMESTAMP('2025-02-25 12:30:00', 'YYYY-MM-DD HH24:MI:SS'), 'Pending');
+    UPDATE parking_slots SET status = 'Reserved' WHERE slot_id = 2;
+    -- Simulate error
+    -- INSERT INTO reservations (user_id) VALUES (999); -- Invalid user_id
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK TO start_reservation;
+        RAISE_APPLICATION_ERROR(-20001, 'Transaction failed: ' || SQLERRM);
+END;
+/
+
+-- 1e. Triggers
+-- Explanation: Triggers automate actions on data changes (e.g., update slot status).
+-- Application: Create and test triggers in SQL Developer.
+
+CREATE OR REPLACE TRIGGER trg_update_slot_status
+AFTER UPDATE OF status ON reservations
+FOR EACH ROW
+BEGIN
+    IF :NEW.status = 'Confirmed' AND :OLD.status = 'Pending' THEN
+        UPDATE parking_slots
+        SET status = 'Occupied'
+        WHERE slot_id = :NEW.slot_id;
+    ELSIF :NEW.status IN ('Completed', 'Cancelled') AND :OLD.status = 'Confirmed' THEN
+        UPDATE parking_slots
+        SET status = 'Available'
+        WHERE slot_id = :NEW.slot_id;
+    END IF;
+END;
+/
+
+-- Test Trigger
+UPDATE reservations SET status = 'Confirmed' WHERE reservation_id = 1;
+
+-- 1f. Views
+-- Explanation: Views simplify complex queries for users.
+-- Application: Create views and query them in SQL Developer.
+
+CREATE VIEW available_parking_slots AS
+    SELECT slot_id, slot_number, location, status, price_per_hour
+    FROM parking_slots
+    WHERE status = 'Available';
+
+CREATE VIEW user_reservations AS
+    SELECT u.user_id, u.full_name, v.license_plate, ps.slot_number, r.start_time, r.end_time, r.status
+    FROM users u
+    JOIN reservations r ON u.user_id = r.user_id
+    JOIN vehicles v ON r.vehicle_id = v.vehicle_id
+    JOIN parking_slots ps ON r.slot_id = ps.slot_id
+    WHERE r.status IN ('Confirmed', 'Pending');
+
+-- Query Views
+SELECT * FROM available_parking_slots;
+SELECT * FROM user_reservations;
+
+-- 1g. Joins
+-- Explanation: Joins combine data from multiple tables (INNER, LEFT, RIGHT, FULL).
+-- Application: Use in reporting queries (see below).
+
+-- Example Join
+SELECT u.full_name, COUNT(r.reservation_id) AS total_reservations
+FROM users u
+LEFT JOIN reservations r ON u.user_id = r.user_id
+GROUP BY u.full_name;
+
+-- 1h. OQL (Object Query Language)
+-- Explanation: Oracle supports object-relational features (e.g., nested tables, user-defined types).
+-- Application: Define object types for complex data (e.g., user with vehicles).
+
+CREATE TYPE vehicle_type AS OBJECT (
+    vehicle_id NUMBER,
+    license_plate VARCHAR2(20),
+    vehicle_type VARCHAR2(50)
+);
+/
+
+CREATE TYPE vehicle_table AS TABLE OF vehicle_type;
+/
+
+CREATE TABLE users_with_vehicles (
+    user_id NUMBER PRIMARY KEY,
+    full_name VARCHAR2(100),
+    vehicles vehicle_table
+) NESTED TABLE vehicles STORE AS vehicles_nested_table;
+
+-- Insert with Object
+INSERT INTO users_with_vehicles (user_id, full_name, vehicles)
+VALUES (1, 'Birhanu Fiseha', vehicle_table(
+    vehicle_type(1, 'ABC123', 'Car'),
+    vehicle_type(2, 'XYZ789', 'Car')
+));
+
+-- Query Object
+SELECT u.user_id, u.full_name, v.vehicle_id, v.license_plate
+FROM users_with_vehicles u, TABLE(u.vehicles) v;
+
+-- 1i. Aggregate Functions
+-- Explanation: Aggregate functions (COUNT, SUM, AVG, MAX, MIN) summarize data.
+-- Application: Used in reporting queries.
+
+SELECT ps.slot_id, ps.slot_number, COUNT(r.reservation_id) AS total_reservations
+FROM parking_slots ps
+LEFT JOIN reservations r ON ps.slot_id = r.slot_id
+GROUP BY ps.slot_id, ps.slot_number
+ORDER BY ps.slot_id;
+
+-- 1j. Backup and Recovery
+-- Explanation: Oracle uses RMAN (Recovery Manager) for backups.
+-- Application: Configure RMAN as a DBA user (not pms_admin).
+
+-- RMAN Example (Run in RMAN prompt)
+-- CONNECT TARGET /
+-- CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF 7 DAYS;
+-- BACKUP DATABASE PLUS ARCHIVELOG;
+-- LIST BACKUP;
+
+-- SQL-Based Export (Alternative for pms_admin)
+-- Use Data Pump (expdp) in command line:
+-- expdp pms_admin/pms_password123 schemas=pms_admin directory=DATA_PUMP_DIR dumpfile=pms_backup.dmp logfile=pms_backup.log
+
+-- 1k. Database Security and Authorization
+-- Explanation: Security includes user roles, privileges, and encryption.
+-- Application: Implement as pms_admin or SYSTEM.
+
+-- Enable Encryption for Sensitive Data
+ALTER TABLE users MODIFY (password_hash ENCRYPT USING 'AES256' NO SALT);
+
+-- Create Profile for Password Policy
+CREATE PROFILE pms_profile LIMIT
+    PASSWORD_LIFE_TIME 90
+    FAILED_LOGIN_ATTEMPTS 5
+    PASSWORD_LOCK_TIME 1;
+
+ALTER USER pms_admin PROFILE pms_profile;
+
+-- 1l. Reporting Query (Optimal)
+-- Explanation: Optimized query for management reports (e.g., daily revenue).
+-- Application: Run in SQL Developer with EXPLAIN PLAN to verify performance.
+
+SELECT 
+    TO_CHAR(p.payment_date, 'YYYY-MM-DD') AS payment_day,
+    SUM(p.amount_paid) AS total_revenue,
+    COUNT(DISTINCT r.reservation_id) AS total_reservations
+FROM payments p
+JOIN reservations r ON p.reservation_id = r.reservation_id
+WHERE p.payment_status = 'Paid'
+AND p.payment_date >= TRUNC(SYSDATE) - 7
+GROUP BY TO_CHAR(p.payment_date, 'YYYY-MM-DD')
+ORDER BY payment_day;
+
+-- Verify Query Plan
+EXPLAIN PLAN FOR
+SELECT 
+    TO_CHAR(p.payment_date, 'YYYY-MM-DD') AS payment_day,
+    SUM(p.amount_paid) AS total_revenue,
+    COUNT(DISTINCT r.reservation_id) AS total_reservations
+FROM payments p
+JOIN reservations r ON p.reservation_id = r.reservation_id
+WHERE p.payment_status = 'Paid'
+AND p.payment_date >= TRUNC(SYSDATE) - 7
+GROUP BY TO_CHAR(p.payment_date, 'YYYY-MM-DD')
+ORDER BY payment_day;
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY);
+
+-- 1m. Concurrency Techniques
+-- Explanation: Oracle uses MVCC (Multi-Version Concurrency Control) and locking.
+-- Application: Test concurrent transactions in multiple SQL*Plus sessions.
+
+-- Session 1: Start Transaction
+BEGIN
+    UPDATE parking_slots SET status = 'Reserved' WHERE slot_id = 1;
+    -- Do not commit yet
+END;
+/
+
+-- Session 2: Attempt Update (will wait or timeout)
+BEGIN
+    UPDATE parking_slots SET status = 'Occupied' WHERE slot_id = 1;
+    COMMIT;
+END;
+/
+
+-- Session 1: Commit or Rollback
+COMMIT;
+
+-- Enable Row-Level Locking
+ALTER TABLE reservations ENABLE ROW MOVEMENT;
+
+-- 1n. Indexing
+-- Explanation: Indexes improve query performance on frequently accessed columns.
+-- Application: Create and monitor indexes in SQL Developer.
+
+CREATE INDEX idx_reservations_user_id ON reservations(user_id);
+CREATE INDEX idx_reservations_vehicle_id ON reservations(vehicle_id);
+CREATE INDEX idx_reservations_slot_id ON reservations(slot_id);
+CREATE INDEX idx_parking_slots_status ON parking_slots(status);
+CREATE INDEX idx_payments_user_id ON payments(user_id);
+
+-- Monitor Index Usage
+SELECT index_name, table_name, monitoring
+FROM user_indexes
+WHERE table_name IN ('RESERVATIONS', 'PARKING_SLOTS', 'PAYMENTS');
+
+-- End of Script
