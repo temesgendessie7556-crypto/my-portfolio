@@ -1,13 +1,4 @@
 -- Parking Management System Implementation in Oracle Database
--- Group Assignment Members:
--- Birhanu Fiseha (Group Leader) (GUR/02498/15)
--- Bihoney Gebremeskel (GUR/01020/16)
--- Atinaw Dessie (GUR/22848/16)
--- Miheretu Mulunehe (GUR/00341/16)
--- Temesegen Dessie (GUR/01339/16)
--- Submitted to: Mr. Antenehe
--- Submission Date: 10/10/2017 E.C
-
 -- This script includes DDL, DML, DCL, TCL, Triggers, Views, Joins, OQL, Aggregate Functions, 
 -- Backup/Recovery Setup, Security, Reporting Queries, Concurrency, and Indexing
 
